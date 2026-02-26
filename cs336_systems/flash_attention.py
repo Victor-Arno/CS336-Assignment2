@@ -10,9 +10,54 @@ def cdiv(a, b):
 
 # ==================== Part (a): PyTorch version ====================
 
+@torch.compile
+def compute_gradients(Q, K, V, O, L, dO, is_causal):
+    # TODO
+    # handle 3D input
+    squeeze_out = False
+    if Q.dim() == 3:
+        Q = Q.unsqueeze(1)
+        K = K.unsqueeze(1)
+        V = V.unsqueeze(1)
+        O = O.unsqueeze(1)
+        L = L.unsqueeze(1)
+        dO = dO.unsqueeze(1)
+        squeeze_out = True
+    
+    # shape parameters
+    batch_size, n_heads, seq_len_q, d = Q.shape
+    seq_len_k = K.shape[-2]
+    # scale
+    scale = 1 / math.sqrt(d)
+    # pre
+    D = torch.sum(O * dO, dim=-1) # D: (s_q, )
+    # recompute S
+    S = einops.einsum(Q, K, "b h s_q d, b h s_k d -> b h s_q s_k") * scale
+    # apply causal mask
+    if is_causal:
+        mask = torch.tril(torch.ones(seq_len_q,seq_len_k,device=Q.device)).bool()
+        S = S.masked_fill(mask==False, -1e6)
+        
+    # recompute P
+    P = torch.exp(S - L.unsqueeze(-1))  
+    
+    #  compute gradient
+    dV = einops.einsum(P, dO, "... s_q s_k, ... s_q d -> ... s_k d")  
+    dP = einops.einsum(dO, V, "... s_q d, ... s_k d -> ... s_q s_k")  
+    dS = P * (dP - D.unsqueeze(-1))  
+    dQ = einops.einsum(dS, K, "... s_q s_k, ... s_k d -> ... s_q d") * scale 
+    dK = einops.einsum(dS, Q, "... s_q s_k, ... s_q d -> ... s_k d") * scale 
+    
+    if squeeze_out:
+        dQ = dQ.squeeze(1)
+        dK = dK.squeeze(1)
+        dV = dV.squeeze(1)
+        
+    return dQ, dK, dV
+
 class Flash_Attention_Pytorch(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, Q, K , V, is_causal=False):
+    def forward(ctx, Q, K, V, is_causal=False):
         # Get shape parameters
 
         # Save original input (for backward)
@@ -125,13 +170,10 @@ class Flash_Attention_Pytorch(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx,grad_out):
-        raise NotImplementedError("Backward pass not implemented yet")
-
-
-
-
-
-
+        Q, K, V, O, L = ctx.saved_tensors
+        dQ, dK, dV = compute_gradients(Q, K, V, O, L, grad_out, ctx.is_causal)
+        return dQ, dK, dV, None
+        
 
 # ==================== Part (b): Triton version ====================
 # Triton kernel
