@@ -6,7 +6,7 @@ import torch
 from cs336_systems.flash_attention import Flash_Attention_Pytorch
 from cs336_systems.flash_attention import Flash_Attention_Triton
 from cs336_systems.ddp import DDPIndividualParameters, on_after_backward, DDPAsyncIndividualParameters, on_after_backward_flat, DDPBucketed
-
+from cs336_systems.sharded_optimizer import ShardedOptimizer
 
 def get_flashattention_autograd_function_pytorch() -> Type:
     """
@@ -138,4 +138,4 @@ def get_sharded_optimizer(params, optimizer_cls: Type[torch.optim.Optimizer], **
     Returns:
         Instance of sharded optimizer.
     """
-    raise NotImplementedError
+    return ShardedOptimizer(params, optimizer_cls, **kwargs)
